@@ -1,6 +1,6 @@
 
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { GeminiService } from '../services/geminiService';
+import { GeminiService, gemini } from '../services/geminiService';
 import { EXPERTS } from '../constants';
 import { AppAction, ViewType } from '../types';
 import { GoogleGenAI, Modality, LiveServerMessage, Type } from '@google/genai';
@@ -11,13 +11,7 @@ interface ArchitectButtonProps {
   onExecuteAction: (action: AppAction) => void;
 }
 
-type ArchitectState = 'idle' | 'syncing' | 'active' | 'summoning' | 'rewinding' | 'error';
-
-interface ManifestedArtifact {
-  id: string;
-  type: 'strategy' | 'contract' | 'vision';
-  label: string;
-}
+type ArchitectState = 'idle' | 'syncing' | 'active' | 'searching' | 'writing' | 'error';
 
 export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
   currentTab,
@@ -26,51 +20,42 @@ export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
 }) => {
   const [state, setState] = useState<ArchitectState>('idle');
   const [vibeLevel, setVibeLevel] = useState(0);
-  const [neuralLog, setNeuralLog] = useState<string>("VEILLE CHRONOS...");
-  const [summonedExpert, setSummonedExpert] = useState<string | null>(null);
-  const [artifacts, setArtifacts] = useState<ManifestedArtifact[]>([]);
-  const [biasScore, setBiasScore] = useState(12);
+  const [neuralLog, setNeuralLog] = useState("ARCHITECTURE EN VEILLE...");
+  const [lastInsight, setLastInsight] = useState<string | null>(null);
   
   const sessionRef = useRef<any>(null);
   const videoRef = useRef<HTMLVideoElement>(null);
+  const orbCanvasRef = useRef<HTMLCanvasElement>(null);
   const inputAudioCtxRef = useRef<AudioContext | null>(null);
   const outputAudioCtxRef = useRef<AudioContext | null>(null);
   const nextStartTimeRef = useRef<number>(0);
   const sourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-  const frameIntervalRef = useRef<number | null>(null);
-  const orbCanvasRef = useRef<HTMLCanvasElement>(null);
 
+  // --- OUTILS DE L'AGENT ---
   const agentTools = {
-    navigate_to: (args: { target: ViewType }) => {
+    navigate: (args: { target: ViewType }) => {
       setActiveTab(args.target);
-      setNeuralLog(`NAVIGATION TEMPORELLE VERS ${args.target.toUpperCase()}...`);
-      return `Navigation effectuée.`;
+      setNeuralLog(`NAVIGATION VERS ${args.target.toUpperCase()}...`);
+      return `Navigation effectuée vers ${args.target}.`;
     },
-    rollback_version: (args: { reason: string }) => {
-      setState('rewinding');
-      onExecuteAction({ type: 'ROLLBACK', payload: { reason: args.reason } });
-      setNeuralLog(`RÉTABLISSEMENT TIMELINE : ${args.reason.toUpperCase()}`);
+    research_investors: async (args: { context: string }) => {
+      setState('searching');
+      setNeuralLog(`RECHERCHE DE BAILLEURS : ${args.context.toUpperCase()}`);
+      const res = await gemini.researchProjectResources(args.context);
+      setState('active');
+      setLastInsight(res.text);
+      return `Résultats trouvés : ${res.text.slice(0, 100)}... Sources : ${res.sources.length}`;
+    },
+    draft_mission_email: (args: { to: string, context: string }) => {
+      setState('writing');
+      setNeuralLog(`RÉDACTION EMAIL POUR ${args.to.toUpperCase()}`);
+      // Simulé pour le live, l'artefact sera visible dans StrategicHub
       setTimeout(() => setState('active'), 2000);
-      return "Protocole de rollback initié.";
+      return `Email rédigé pour ${args.to} basé sur le contexte.`;
     },
-    summon_expert: (args: { expertId: string, reason: string }) => {
-      const exp = EXPERTS.find(e => e.id === args.expertId);
-      if (exp) {
-        setSummonedExpert(exp.avatar);
-        setTimeout(() => setSummonedExpert(null), 8000);
-        setNeuralLog(`INVOCATION DE ${exp.name}...`);
-        return `Expert invoqué.`;
-      }
-      return "Expert introuvable.";
-    },
-    manifest_artifact: (args: { label: string, type: 'strategy' | 'contract' | 'vision' }) => {
-      const newArt: ManifestedArtifact = { id: Math.random().toString(36).substr(2, 9), ...args };
-      setArtifacts(prev => [newArt, ...prev].slice(0, 3));
-      return `Artefact matérialisé.`;
-    },
-    audit_bias: (args: { score: number }) => {
-      setBiasScore(args.score);
-      return "Analyse de biais mise à jour.";
+    open_session: (args: { target: string }) => {
+      setNeuralLog(`OUVERTURE SESSION : ${args.target.toUpperCase()}`);
+      return "Session initialisée.";
     }
   };
 
@@ -82,13 +67,13 @@ export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
     const draw = () => {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       const time = Date.now() * 0.002;
-      const radius = 50 + (vibeLevel / 4) + Math.sin(time * 2) * 5;
+      const radius = 50 + (vibeLevel / 3) + Math.sin(time * 3) * 8;
       ctx.save();
       ctx.translate(100, 100);
-      if (state === 'rewinding') ctx.rotate(-time * 10);
-      else ctx.rotate(time * 0.5);
-      const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, radius + 40);
-      grad.addColorStop(0, state === 'rewinding' ? '#ef4444' : (state === 'summoning' ? '#a855f7' : '#3b82f6'));
+      ctx.rotate(time * 0.4);
+      const grad = ctx.createRadialGradient(0, 0, 5, 0, 0, radius + 50);
+      const color = state === 'searching' ? '#10b981' : (state === 'writing' ? '#f59e0b' : '#3b82f6');
+      grad.addColorStop(0, color);
       grad.addColorStop(1, 'transparent');
       ctx.beginPath();
       ctx.arc(0, 0, radius, 0, Math.PI * 2);
@@ -103,15 +88,11 @@ export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
 
   const stopSession = useCallback(() => {
     if (sessionRef.current) { sessionRef.current.close(); sessionRef.current = null; }
-    if (frameIntervalRef.current) { window.clearInterval(frameIntervalRef.current); frameIntervalRef.current = null; }
-    if (videoRef.current?.srcObject) {
-      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
-      videoRef.current.srcObject = null;
-    }
     if (inputAudioCtxRef.current) { inputAudioCtxRef.current.close(); inputAudioCtxRef.current = null; }
     if (outputAudioCtxRef.current) { outputAudioCtxRef.current.close(); outputAudioCtxRef.current = null; }
     sourcesRef.current.forEach(s => { try { s.stop(); } catch(e) {} });
     sourcesRef.current.clear();
+    if (videoRef.current?.srcObject) { (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop()); }
     setState('idle');
   }, []);
 
@@ -164,7 +145,7 @@ export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
               source.connect(outputNode);
               source.start(nextStartTimeRef.current);
               nextStartTimeRef.current += audioBuffer.duration;
-              setVibeLevel(85);
+              setVibeLevel(90);
               setTimeout(() => setVibeLevel(0), 400);
             }
             if (message.toolCall) {
@@ -187,13 +168,15 @@ export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
           outputAudioTranscription: {},
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Zephyr' } } },
           tools: [{ functionDeclarations: [
-            { name: 'navigate_to', parameters: { type: Type.OBJECT, properties: { target: { type: Type.STRING } }, required: ['target'] } },
-            { name: 'rollback_version', parameters: { type: Type.OBJECT, properties: { reason: { type: Type.STRING } }, required: ['reason'] } },
-            { name: 'summon_expert', parameters: { type: Type.OBJECT, properties: { expertId: { type: Type.STRING }, reason: { type: Type.STRING } }, required: ['expertId', 'reason'] } },
-            { name: 'manifest_artifact', parameters: { type: Type.OBJECT, properties: { label: { type: Type.STRING }, type: { type: Type.STRING, enum: ['strategy', 'contract', 'vision'] } }, required: ['label', 'type'] } },
-            { name: 'audit_bias', parameters: { type: Type.OBJECT, properties: { score: { type: Type.NUMBER } }, required: ['score'] } }
+            { name: 'navigate', parameters: { type: Type.OBJECT, properties: { target: { type: Type.STRING } }, required: ['target'] } },
+            { name: 'research_investors', parameters: { type: Type.OBJECT, properties: { context: { type: Type.STRING } }, required: ['context'] } },
+            { name: 'draft_mission_email', parameters: { type: Type.OBJECT, properties: { to: { type: Type.STRING }, context: { type: Type.STRING } }, required: ['to', 'context'] } },
+            { name: 'open_session', parameters: { type: Type.OBJECT, properties: { target: { type: Type.STRING } }, required: ['target'] } }
           ] as any }],
-          systemInstruction: `ARCHITECTE v32. Tu vois via cam. Actions: 'navigate_to', 'rollback_version', 'summon_expert', 'manifest_artifact'.`
+          systemInstruction: `Tu es l'ARCHITECTE v42, gestionnaire de projet de bout en bout. 
+          Tu accompagnes l'utilisateur du concept au rapport final. 
+          Capacités : recherche d'investisseurs réels, rédaction d'emails stratégiques, navigation dans l'app.
+          Utilise 'research_investors' pour trouver des partenaires réels sur le web.`
         }
       });
       sessionRef.current = await sessionPromise;
@@ -205,52 +188,55 @@ export const ArchitectBranch: React.FC<ArchitectButtonProps> = ({
       {state !== 'idle' && (
         <div className="absolute top-12 left-1/2 -translate-x-1/2 w-full max-w-5xl flex justify-between items-start pointer-events-auto px-12">
            <div className="glass-panel border-blue-500/20 rounded-[3rem] p-8 w-80 space-y-4 shadow-2xl">
-              <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest block">Plan de Destinée</span>
-              <div className="space-y-3">
-                 {artifacts.map(art => (
-                   <div key={art.id} className="flex items-center gap-3">
-                      <div className={`w-2 h-2 rounded-full ${art.type === 'strategy' ? 'bg-blue-500' : 'bg-emerald-500'}`}></div>
-                      <span className="text-[10px] font-bold text-slate-200 uppercase">{art.label}</span>
-                   </div>
-                 ))}
+              <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest block">Statut Mission</span>
+              <div className="flex items-center gap-3">
+                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></div>
+                 <span className="text-[10px] font-bold text-slate-200 uppercase">{state}</span>
               </div>
            </div>
-           <div className="glass-panel border-red-500/20 rounded-[3rem] p-8 w-64 shadow-2xl">
-              <span className="text-[10px] font-black text-red-400 uppercase tracking-widest block text-center mb-4">Risque Cognitif</span>
-              <div className="h-1.5 bg-white/5 rounded-full overflow-hidden">
-                 <div className="h-full bg-red-600 transition-all duration-1000" style={{ width: `${biasScore}%` }}></div>
-              </div>
-           </div>
+           {lastInsight && (
+             <div className="glass-panel border-emerald-500/20 rounded-[3rem] p-8 w-96 shadow-2xl animate-in slide-in-from-top-4">
+                <span className="text-[10px] font-black text-emerald-400 uppercase tracking-widest block mb-4">Insight Détecté</span>
+                <p className="text-[11px] text-slate-300 italic truncate group-hover:whitespace-normal">{lastInsight}</p>
+             </div>
+           )}
         </div>
       )}
 
       {state !== 'idle' && state !== 'syncing' && (
         <div className="absolute bottom-12 left-12 pointer-events-auto">
-           <div className="relative w-64 aspect-video rounded-[2rem] overflow-hidden border-2 border-white/10 shadow-2xl bg-black">
+           <div className="relative w-72 aspect-video rounded-[2.5rem] overflow-hidden border-2 border-white/10 shadow-2xl bg-black">
               <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover grayscale brightness-125 scale-x-[-1]" />
-              <div className="absolute top-3 left-3 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div><span className="text-[8px] font-black text-white uppercase">Vision v32</span></div>
+              <div className="absolute top-3 left-3 flex items-center gap-2"><div className="w-2 h-2 rounded-full bg-red-500 animate-pulse"></div><span className="text-[8px] font-black text-white uppercase">Neural Sight ON</span></div>
            </div>
         </div>
       )}
 
       {state !== 'idle' && (
-        <div className="absolute bottom-44 left-16 max-w-2xl">
-           <div className="p-8 bg-black/60 backdrop-blur-3xl border border-white/5 rounded-[3rem] shadow-2xl">
+        <div className="absolute bottom-48 left-16 max-w-2xl">
+           <div className="p-10 bg-black/60 backdrop-blur-3xl border border-white/5 rounded-[3.5rem] shadow-2xl">
               <p className="text-xl font-medium italic text-blue-100 leading-relaxed">"{neuralLog}"</p>
            </div>
         </div>
       )}
 
       <div className="absolute bottom-12 right-12 flex flex-col items-end gap-6 pointer-events-auto">
-        <div className="relative group cursor-pointer" onClick={state === 'active' || state === 'summoning' ? stopSession : startArchitect}>
-          <div className={`relative w-32 h-32 rounded-full flex items-center justify-center transition-all duration-700 shadow-2xl border-4 ${
+        <div className="relative group cursor-pointer" onClick={state === 'active' ? stopSession : startArchitect}>
+          <div className={`relative w-36 h-36 rounded-full flex items-center justify-center transition-all duration-700 shadow-2xl border-4 ${
             state === 'active' ? 'bg-[#03030b] border-blue-500 scale-110' : 
-            state === 'rewinding' ? 'bg-red-900/20 border-red-500 scale-125 rotate-180' :
+            state === 'searching' ? 'bg-emerald-900/20 border-emerald-500 scale-125' :
             'bg-blue-600 border-white/20 hover:scale-105'
           }`}>
             <canvas ref={orbCanvasRef} width={200} height={200} className="absolute inset-0 w-full h-full rounded-full" />
-            <i className={`fas ${state === 'idle' ? 'fa-shield-halved' : state === 'syncing' ? 'fa-circle-notch animate-spin' : 'fa-brain'} text-4xl text-white`}></i>
+            <i className={`fas ${state === 'idle' ? 'fa-rocket' : state === 'syncing' ? 'fa-circle-notch animate-spin' : 'fa-brain-circuit'} text-5xl text-white`}></i>
           </div>
+          {state === 'idle' && (
+            <div className="absolute right-full mr-10 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 transition-all scale-75 group-hover:scale-100 pointer-events-none">
+               <div className="glass-panel p-6 rounded-2xl whitespace-nowrap">
+                  <span className="text-[10px] font-black text-blue-400 uppercase tracking-widest">Invoquer l'Architecte de Mission</span>
+               </div>
+            </div>
+          )}
         </div>
       </div>
     </div>

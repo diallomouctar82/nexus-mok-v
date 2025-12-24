@@ -1,12 +1,11 @@
-
-import { GoogleGenAI, GenerateContentResponse, Type, Modality } from "@google/genai";
-import { Message, Expert, GroundingSource, ViewType, AppAction, StrategicPlan, QuizQuestion, SimulationScenario, Flashcard } from "../types";
+import { GoogleGenAI, GenerateContentResponse, Type, Modality, FunctionDeclaration } from "@google/genai";
+import { Message, Expert, GroundingSource, ViewType, AppAction, StrategicPlan, QuizQuestion, SimulationScenario, Flashcard, Artifact, AcademyMission } from "../types";
 import { EXPERTS } from "../constants";
 
-export interface TacticalAssistance {
-  subtasks: string[];
-  advice: string;
-  tools: string[];
+export interface ToolResponse {
+  text: string;
+  sources: GroundingSource[];
+  functionCalls?: any[];
 }
 
 export class GeminiService {
@@ -14,9 +13,58 @@ export class GeminiService {
     return new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
-  /**
-   * CŒUR DE DIALOGUE : Utilise Pro pour la réflexion profonde ou Flash-Lite pour la vélocité.
-   */
+  // Outils disponibles pour l'Architecte dans le chat texte
+  private getProjectTools(): FunctionDeclaration[] {
+    return [
+      {
+        name: 'research_web',
+        description: 'Rechercher des informations réelles sur internet (bailleurs, partenaires, données marché).',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            query: { type: Type.STRING, description: 'La recherche spécifique à effectuer.' }
+          },
+          required: ['query']
+        }
+      },
+      {
+        name: 'generate_artifact',
+        description: 'Générer un document officiel (email, rapport, plan stratégique).',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            type: { type: Type.STRING, enum: ['email', 'report', 'plan', 'contract'], description: 'Type de document.' },
+            title: { type: Type.STRING, description: 'Titre du document.' },
+            context: { type: Type.STRING, description: 'Contenu détaillé ou contexte pour la rédaction.' }
+          },
+          required: ['type', 'title', 'context']
+        }
+      },
+      {
+        name: 'app_navigation',
+        description: 'Naviguer vers une vue spécifique de l\'application.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            target: { type: Type.STRING, description: 'La vue cible (ex: shop, strategy, mok, exchange).' }
+          },
+          required: ['target']
+        }
+      },
+      {
+        name: 'trigger_multimodal',
+        description: 'Lancer un appel vocal ou vidéo avec l\'expert actuel.',
+        parameters: {
+          type: Type.OBJECT,
+          properties: {
+            mode: { type: Type.STRING, enum: ['voice', 'video'] }
+          },
+          required: ['mode']
+        }
+      }
+    ];
+  }
+
   async sendMessage(
     expert: Expert, 
     message: string, 
@@ -26,29 +74,25 @@ export class GeminiService {
       useFastMode?: boolean,
       useSearch?: boolean, 
       useMaps?: boolean,
+      enableTools?: boolean,
       latLng?: { latitude: number, longitude: number }
     }
-  ): Promise<{ text: string, sources: GroundingSource[], image?: string }> {
+  ): Promise<ToolResponse> {
     const ai = this.getClient();
-    let model = 'gemini-3-flash-preview';
-    const config: any = { systemInstruction: expert.systemInstruction };
+    let model = options?.useThinking ? 'gemini-3-pro-preview' : 'gemini-3-flash-preview';
+    
+    const config: any = { 
+      systemInstruction: expert.systemInstruction + "\nTu as accès à des outils de gestion de projet. Utilise-les si nécessaire pour aider l'utilisateur (recherche, documents, navigation).",
+    };
 
     if (options?.useThinking) {
-      model = 'gemini-3-pro-preview';
-      config.thinkingConfig = { thinkingBudget: 32768 };
-    } else if (options?.useFastMode) {
-      model = 'gemini-flash-lite-latest';
+      config.thinkingConfig = { thinkingBudget: 16384 };
     }
 
-    if (options?.useSearch) {
-      model = 'gemini-3-flash-preview';
+    if (options?.enableTools) {
+      config.tools = [{ functionDeclarations: this.getProjectTools() }, { googleSearch: {} }];
+    } else if (options?.useSearch) {
       config.tools = [{ googleSearch: {} }];
-    } else if (options?.useMaps) {
-      model = 'gemini-2.5-flash';
-      config.tools = [{ googleMaps: {} }];
-      if (options.latLng) {
-        config.toolConfig = { retrievalConfig: { latLng: options.latLng } };
-      }
     }
 
     const contents = [
@@ -68,6 +112,49 @@ export class GeminiService {
       }).filter((s): s is GroundingSource => s !== null);
     }
 
+    return { 
+      text: response.text || "", 
+      sources,
+      functionCalls: response.functionCalls 
+    };
+  }
+
+  // Autres méthodes existantes conservées...
+  async generateProjectArtifact(plan: StrategicPlan, type: string, context: string): Promise<Artifact> {
+    const ai = this.getClient();
+    const prompt = `Agis en tant que gestionnaire de projet expert. Basé sur le plan stratégique : "${plan.goal}" et le contexte actuel : "${context}".
+    Génère un artefact de type "${type}" (ex: Email, Rapport, Liste de Bailleurs, Business Plan).
+    Réponds en JSON avec : title, content (Markdown), type.`;
+    
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: [{ role: 'user', parts: [{ text: prompt }] }],
+      config: { 
+        responseMimeType: "application/json",
+        thinkingConfig: { thinkingBudget: 8192 }
+      }
+    });
+    const result = JSON.parse(response.text || "{}");
+    return {
+      id: Math.random().toString(36).substr(2, 9),
+      expertId: 'maitre_diallo',
+      ...result
+    };
+  }
+
+  async researchProjectResources(query: string): Promise<{ text: string, sources: GroundingSource[] }> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: `Recherche des bailleurs de fonds, investisseurs ou partenaires réels pour : "${query}". Donne des détails précis et des liens.` }] }],
+      config: { tools: [{ googleSearch: {} }] }
+    });
+    
+    let sources: GroundingSource[] = [];
+    const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
+    if (chunks) {
+      sources = chunks.map((chunk: any) => (chunk.web ? { uri: chunk.web.uri, title: chunk.web.title } : null)).filter((s): s is GroundingSource => s !== null);
+    }
     return { text: response.text || "...", sources };
   }
 
@@ -82,10 +169,6 @@ export class GeminiService {
   }
 
   async analyzeImage(data: string, mimeType: string, prompt: string): Promise<string> {
-    return this.analyzeMedia(prompt, { data, mimeType });
-  }
-
-  async analyzeVideo(data: string, mimeType: string, prompt: string): Promise<string> {
     return this.analyzeMedia(prompt, { data, mimeType });
   }
 
@@ -114,14 +197,11 @@ export class GeminiService {
   async generateImage(prompt: string, config: { aspectRatio: string, imageSize: string }): Promise<string> {
     const ai = this.getClient();
     const model = (config.imageSize === '2K' || config.imageSize === '4K') ? 'gemini-3-pro-image-preview' : 'gemini-2.5-flash-image';
-    
     const response = await ai.models.generateContent({
       model,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
       config: { imageConfig: { aspectRatio: config.aspectRatio, imageSize: config.imageSize } }
     });
-
-    // Added safety check for candidates and parts iteration to prevent runtime errors
     const candidate = response.candidates?.[0];
     if (candidate?.content?.parts) {
       for (const part of candidate.content.parts) {
@@ -131,22 +211,6 @@ export class GeminiService {
     throw new Error("Échec de génération d'image.");
   }
 
-  async editImage(data: string, mimeType: string, prompt: string): Promise<string> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash-image',
-      contents: [{ role: 'user', parts: [{ inlineData: { data, mimeType } }, { text: prompt }] }]
-    });
-    // Added safety check for candidates and parts iteration to prevent runtime errors
-    const candidate = response.candidates?.[0];
-    if (candidate?.content?.parts) {
-      for (const part of candidate.content.parts) {
-        if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
-      }
-    }
-    throw new Error("Échec de l'édition d'image.");
-  }
-
   async generateVideo(prompt: string, aspectRatio: '16:9' | '9:16', sourceImage?: { data: string, mimeType: string }): Promise<string> {
     const ai = this.getClient();
     const params: any = {
@@ -154,10 +218,7 @@ export class GeminiService {
       prompt,
       config: { numberOfVideos: 1, resolution: '720p', aspectRatio }
     };
-    if (sourceImage) {
-      params.image = { imageBytes: sourceImage.data, mimeType: sourceImage.mimeType };
-    }
-
+    if (sourceImage) params.image = { imageBytes: sourceImage.data, mimeType: sourceImage.mimeType };
     let operation = await ai.models.generateVideos(params);
     while (!operation.done) {
       await new Promise(resolve => setTimeout(resolve, 10000));
@@ -205,19 +266,6 @@ export class GeminiService {
     return JSON.parse(response.text || "{}");
   }
 
-  async generateStepAssistance(step: any, goal: string): Promise<TacticalAssistance> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Fournis une assistance tactique chirurgicale pour l'étape "${step.title}" du projet "${goal}". Réfléchis en mode architecte.` }] }],
-      config: { 
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 8192 }
-      }
-    });
-    return JSON.parse(response.text || "{}");
-  }
-
   async parseOmniCommand(input: string): Promise<any> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
@@ -228,67 +276,14 @@ export class GeminiService {
     return JSON.parse(response.text || "{}");
   }
 
-  async generateDailyMissions(): Promise<any[]> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: "Génère 3 missions d'apprentissage quotidiennes pour l'Académie Diallo. Réponds en JSON." }] }],
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "[]");
-  }
-
   async generateCourse(topic: string): Promise<any> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Crée un cursus de formation complet sur : "${topic}". Réfléchis à la structure pédagogique.` }] }],
-      config: { 
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 16384 }
-      }
+      contents: [{ role: 'user', parts: [{ text: `Crée un cursus de formation complet sur : "${topic}". Réflexion pédagogique.` }] }],
+      config: { responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 16384 } }
     });
     return JSON.parse(response.text || "{}");
-  }
-
-  async generateFlashcards(summary: string): Promise<Flashcard[]> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Génère une liste de flashcards (JSON array of {id, front, back, difficulty}) basée sur ce résumé : "${summary}"` }] }],
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "[]");
-  }
-
-  async generateQuiz(title: string, content: string): Promise<QuizQuestion[]> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Génère un quiz de 5 questions (JSON array of {id, question, options, correctAnswer, explanation}) pour le cours "${title}" basé sur : "${content}"` }] }],
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "[]");
-  }
-
-  async generateSimulationScenario(topic: string): Promise<SimulationScenario> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Génère un scénario de simulation réaliste (JSON: {id, title, context, goal, difficulty}) pour le sujet : "${topic}"` }] }],
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "{}");
-  }
-
-  async generateVocabList(language: string, context: string): Promise<any[]> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: `Génère une liste de 10 mots de vocabulaire en ${language} pour le contexte "${context}" (JSON array of {word, translation, example, tip})` }] }],
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "[]");
   }
 
   async getMarketIntelligence(query: string): Promise<{ text: string, sources: GroundingSource[] }> {
@@ -298,16 +293,11 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: query }] }],
       config: { tools: [{ googleSearch: {} }] }
     });
-    
     let sources: GroundingSource[] = [];
     const chunks = response.candidates?.[0]?.groundingMetadata?.groundingChunks;
     if (chunks) {
-      sources = chunks.map((chunk: any) => {
-        if (chunk.web) return { uri: chunk.web.uri, title: chunk.web.title };
-        return null;
-      }).filter((s): s is GroundingSource => s !== null);
+      sources = chunks.map((chunk: any) => (chunk.web ? { uri: chunk.web.uri, title: chunk.web.title } : null)).filter((s): s is GroundingSource => s !== null);
     }
-
     return { text: response.text || "...", sources };
   }
 
@@ -315,7 +305,7 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Analyse les risques commerciaux pour l'actif suivant : "${description}". Réponds en JSON: {score: number (0-100), risks: string[], advice: string}` }] }],
+      contents: [{ role: 'user', parts: [{ text: `Analyse les risques pour : "${description}". JSON: {score, risks, advice}.` }] }],
       config: { responseMimeType: "application/json" }
     });
     return JSON.parse(response.text || "{}");
@@ -325,23 +315,10 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Estime la valeur de cet actif : "${description}". Réponds en JSON: {suggestedPrice: string, reasoning: string, marketTrend: string ('up'|'down'|'stable')}` }] }],
+      contents: [{ role: 'user', parts: [{ text: `Estime la valeur : "${description}". JSON: {suggestedPrice, reasoning, marketTrend}.` }] }],
       config: { responseMimeType: "application/json" }
     });
     return JSON.parse(response.text || "{}");
-  }
-
-  async getTacticalSuggestions(history: Message[]): Promise<string[]> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Suggère 3 tactiques de négociation courtes (JSON array of strings)." }] }
-      ],
-      config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "[]");
   }
 
   async negotiateTrade(history: Message[], userInput: string, tactic?: string): Promise<string> {
@@ -350,45 +327,111 @@ export class GeminiService {
       model: 'gemini-3-pro-preview',
       contents: [
         ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: tactic ? `Utilise cette tactique : ${tactic}. Message : ${userInput}` : userInput }] }
+        { role: 'user', parts: [{ text: tactic ? `Tactic: ${tactic}. Input: ${userInput}` : userInput }] }
       ]
     });
     return response.text || "";
   }
 
-  async mediateConflict(history: Message[]): Promise<string> {
+  async synthesizeExpert(prompt: string): Promise<Expert> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Agis en tant que médiateur Maître Diallo. Propose un compromis équitable." }] }
-      ]
+      contents: [{ role: 'user', parts: [{ text: `Synthétise un expert IA Diallo pour : "${prompt}". JSON complet.` }] }],
+      config: { responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 4096 } }
     });
-    return response.text || "";
+    return JSON.parse(response.text || "{}");
+  }
+
+  async generateDailyMissions(): Promise<AcademyMission[]> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: "Génère 3 missions quotidiennes pour une académie de formation à la souveraineté. JSON: [{id, title, reward, difficulty, completed: false}]." }] }],
+      config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || "[]");
+  }
+
+  async generateFlashcards(summary: string): Promise<Flashcard[]> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: `Génère 5 flashcards à partir de ce texte : "${summary}". JSON: [{id, front, back, difficulty: 1}].` }] }],
+      config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || "[]");
+  }
+
+  async generateQuiz(title: string, content: string): Promise<QuizQuestion[]> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: [{ role: 'user', parts: [{ text: `Crée un quiz de 5 questions sur : "${title}". Contenu : "${content}". JSON: [{id, question, options, correctAnswer, explanation}]. Les options sont un tableau de 4 chaînes.` }] }],
+      config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || "[]");
+  }
+
+  async generateSimulationScenario(courseTitle: string): Promise<SimulationScenario> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-preview',
+      contents: [{ role: 'user', parts: [{ text: `Crée un scénario de simulation complexe pour le cours : "${courseTitle}". JSON: {id, title, context, goal, difficulty}.` }] }],
+      config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || "{}");
+  }
+
+  async generateVocabList(lang: string, context: string): Promise<any[]> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: `Génère une liste de 10 mots essentiels en ${lang} pour le contexte : "${context}". JSON: [{word, translation, example, tip}].` }] }],
+      config: { responseMimeType: "application/json" }
+    });
+    return JSON.parse(response.text || "[]");
+  }
+
+  async editImage(base64ImageData: string, mimeType: string, prompt: string): Promise<string> {
+    const ai = this.getClient();
+    const response = await ai.models.generateContent({
+      model: 'gemini-2.5-flash-image',
+      contents: {
+        parts: [
+          { inlineData: { data: base64ImageData, mimeType } },
+          { text: prompt },
+        ],
+      },
+    });
+    const candidate = response.candidates?.[0];
+    if (candidate?.content?.parts) {
+      for (const part of candidate.content.parts) {
+        if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+      }
+    }
+    throw new Error("Échec de l'édition d'image.");
+  }
+
+  async analyzeVideo(data: string, mimeType: string, prompt: string): Promise<string> {
+    return this.analyzeMedia(prompt, { data, mimeType });
   }
 
   async generateSynergyOracle(history: Message[]): Promise<any> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Calcule le score de consensus (0-100) pour cette synergie (JSON: {consensusScore: number})." }] }
-      ],
+      contents: [{ role: 'user', parts: [{ text: `Analyse cette conversation de groupe et donne un score de consensus global. Historique : ${JSON.stringify(history)}. JSON: {consensusScore: number (0-100)}.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return JSON.parse(response.text || '{"consensusScore": 50}');
   }
 
-  async getDetailedConsensus(history: Message[], experts: Expert[]): Promise<any[]> {
+  async getDetailedConsensus(history: Message[], selectedExperts: Expert[]): Promise<any[]> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: `Détaille le consensus pour ces experts : ${experts.map(e => e.name).join(', ')} (JSON array of {expertId, score, reasoning}).` }] }
-      ],
+      contents: [{ role: 'user', parts: [{ text: `Pour chaque expert, évalue son score d'alignement sur la solution finale. Experts: ${JSON.stringify(selectedExperts.map(e => e.name))}. Historique : ${JSON.stringify(history)}. JSON: [{expertId, score, reasoning}].` }] }],
       config: { responseMimeType: "application/json" }
     });
     return JSON.parse(response.text || "[]");
@@ -397,11 +440,8 @@ export class GeminiService {
   async identifyBreakthroughs(history: Message[]): Promise<any[]> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Identifie les percées stratégiques majeures (JSON array of {messageId, insight, impact})." }] }
-      ],
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: `Identifie les moments clés de rupture ou d'innovation dans cette discussion. JSON: [{messageId, insight, impact}].` }] }],
       config: { responseMimeType: "application/json" }
     });
     return JSON.parse(response.text || "[]");
@@ -411,10 +451,7 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Audit les biais cognitifs dans cette discussion (JSON: {dominantBias, recommendation})." }] }
-      ],
+      contents: [{ role: 'user', parts: [{ text: `Analyse les biais cognitifs dominants dans cette discussion. JSON: {dominantBias, recommendation}.` }] }],
       config: { responseMimeType: "application/json" }
     });
     return JSON.parse(response.text || "{}");
@@ -424,10 +461,7 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Extrais les ancres stratégiques décidées (JSON array of {id, title, description, impact: 'high'|'medium'})." }] }
-      ],
+      contents: [{ role: 'user', parts: [{ text: `Extrais les décisions stratégiques immuables (ancres) de cette session. JSON: [{id, title, description, impact: "high" | "medium"}].` }] }],
       config: { responseMimeType: "application/json" }
     });
     return JSON.parse(response.text || "[]");
@@ -436,11 +470,8 @@ export class GeminiService {
   async generateSynergySummary(history: Message[]): Promise<string> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Résume brièvement la synergie en cours." }] }
-      ]
+      model: 'gemini-3-flash-preview',
+      contents: [{ role: 'user', parts: [{ text: "Résume synthétiquement les points d'accord majeurs de cette discussion." }, ...history.map(m => ({ text: m.content }))] }],
     });
     return response.text || "";
   }
@@ -449,24 +480,8 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
-        { role: 'user', parts: [{ text: "Forger un manifeste d'action mondial basé sur cette discussion (JSON: {title, vision, roadmap: string[], criticalSuccessFactors: string[]})." }] }
-      ],
+      contents: [{ role: 'user', parts: [{ text: `Génère un Manifeste d'Action Collective basé sur ces échanges. JSON: {title, vision, roadmap, criticalSuccessFactors}. roadmap et criticalSuccessFactors sont des tableaux de chaînes.` }] }],
       config: { responseMimeType: "application/json" }
-    });
-    return JSON.parse(response.text || "{}");
-  }
-
-  async synthesizeExpert(prompt: string): Promise<Expert> {
-    const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Synthétise un nouvel expert IA Diallo basé sur : "${prompt}". Réponds en JSON avec id, name, role, description, systemInstruction, avatar, color, voiceName.` }] }],
-      config: { 
-        responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 4096 }
-      }
     });
     return JSON.parse(response.text || "{}");
   }

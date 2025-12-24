@@ -1,4 +1,3 @@
-
 export enum ExpertId {
   DIALLO = 'diallo',
   MAITRE_DIALLO = 'maitre_diallo',
@@ -129,15 +128,18 @@ export interface AcademyMission {
   completed: boolean;
 }
 
-// Global augmentation moved into declare global block to fix redeclaration conflict
+// Fixed: Moved AIStudio interface to global scope to prevent subsequent property declaration conflicts on Window
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;
     openSelectKey: () => Promise<void>;
   }
+
   interface Window {
-    // Making this non-optional and using the local interface definition
-    // ensures it merges correctly with the environment's global definition.
-    aistudio: AIStudio;
+    /**
+     * AI Studio environment bridge for API key management.
+     * Optional to avoid conflicts with environmental definitions.
+     */
+    aistudio?: AIStudio;
   }
 }

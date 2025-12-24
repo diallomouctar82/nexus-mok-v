@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useRef } from 'react';
 import { gemini } from '../services/geminiService';
 import { EXPERTS } from '../constants';
@@ -88,13 +87,9 @@ export const QuantumExchange: React.FC = () => {
   const [isProcessing, setIsProcessing] = useState(false);
   const [negotiationLog, setNegotiationLog] = useState<Message[]>([]);
   const [userInput, setUserInput] = useState('');
-  const [contractText, setContractText] = useState("");
   const [riskData, setRiskData] = useState<{score: number, risks: string[], advice: string} | null>(null);
   const [appraisalData, setAppraisalData] = useState<{suggestedPrice: string, reasoning: string, marketTrend: string} | null>(null);
-  const [marketIntel, setMarketIntel] = useState<{text: string, sources: GroundingSource[]} | null>(null);
-  const [tacticalSuggestions, setTacticalSuggestions] = useState<string[]>([]);
   const [hotspotReport, setHotspotReport] = useState<string | null>(null);
-  const [logisticsData, setLogisticsData] = useState<any>(null);
   const [isMediationActive, setIsMediationActive] = useState(false);
 
   // Listing Form State
@@ -116,21 +111,14 @@ export const QuantumExchange: React.FC = () => {
     setSelectedItem(item);
     setIsProcessing(true);
     setActiveTab('verify');
-    setMarketIntel(null);
     setHotspotReport(null);
     try {
-      const [risk, appraisal, intel, logistics] = await Promise.all([
+      const [risk, appraisal] = await Promise.all([
         gemini.analyzeTradeRisk(item.name + " : " + item.desc),
-        gemini.appraiseAsset(item.name + " : " + item.desc),
-        gemini.getMarketIntelligence(item.name),
-        gemini.predictNextAction(`Suggère des frais de douane et routes logistiques pour : ${item.name}`)
+        gemini.appraiseAsset(item.name + " : " + item.desc)
       ]);
       setRiskData(risk);
       setAppraisalData(appraisal);
-      setMarketIntel(intel);
-      setLogisticsData(logistics.payload);
-      const suggestions = await gemini.getTacticalSuggestions([]);
-      setTacticalSuggestions(suggestions);
     } catch (e) {
       console.error(e);
     } finally {
@@ -200,27 +188,6 @@ export const QuantumExchange: React.FC = () => {
       const response = await gemini.negotiateTrade(negotiationLog, textToSend, tactic);
       const modelMsg: Message = { id: Date.now().toString(), role: 'model', content: response, timestamp: Date.now() };
       setNegotiationLog(prev => [...prev, modelMsg]);
-      const suggestions = await gemini.getTacticalSuggestions([...negotiationLog, userMsg, modelMsg]);
-      setTacticalSuggestions(suggestions);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsProcessing(false);
-    }
-  };
-
-  const callMediation = async () => {
-    setIsMediationActive(true);
-    setIsProcessing(true);
-    try {
-      const mediationRes = await gemini.mediateConflict(negotiationLog);
-      const modelMsg: Message = { 
-        id: Date.now().toString(), 
-        role: 'model', 
-        content: `⚖️ MAÎTRE DIALLO INTERVIENT : ${mediationRes}`, 
-        timestamp: Date.now() 
-      };
-      setNegotiationLog(prev => [...prev, modelMsg]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -262,7 +229,9 @@ export const QuantumExchange: React.FC = () => {
                        <h3 className="text-4xl font-black uppercase italic tracking-tighter font-orbitron text-white">Nexus <span className="text-emerald-500">Forge</span></h3>
                     </div>
                  </div>
-                 <button onClick={() => setActiveTab('market')} className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center hover:bg-white/10 transition-all"><i className="fas fa-times"></i></button>
+                 <button onClick={() => setActiveTab('market')} className="w-12 h-12 bg-white/5 rounded-2xl flex items-center justify-center hover:bg-white/10 transition-all">
+                    <i className="fas fa-times"></i>
+                 </button>
               </header>
 
               <main className="grid grid-cols-1 md:grid-cols-2 gap-16">
@@ -365,7 +334,9 @@ export const QuantumExchange: React.FC = () => {
                 </div>
                 <div className="flex gap-6">
                    <input type="text" value={userInput} onChange={e => setUserInput(e.target.value)} onKeyDown={e => e.key === 'Enter' && handleNegotiate()} placeholder="Message..." className="flex-1 bg-white/5 border border-white/10 rounded-[2.5rem] px-12 py-8 text-xl outline-none" />
-                   <button onClick={() => handleNegotiate()} className="w-24 h-24 bg-emerald-600 rounded-[2rem] flex items-center justify-center shadow-2xl"><i className="fas fa-paper-plane"></i></button>
+                   <button onClick={() => handleNegotiate()} className="w-24 h-24 bg-emerald-600 rounded-[2rem] flex items-center justify-center shadow-2xl">
+                      <i className="fas fa-paper-plane"></i>
+                   </button>
                 </div>
              </div>
            )}

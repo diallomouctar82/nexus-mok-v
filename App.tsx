@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { EXPERTS } from './constants';
 import { Expert, Message, ViewType, AppAction } from './types';
@@ -96,6 +95,9 @@ const App: React.FC = () => {
           setPendingGoal(action.payload.goal);
         }
       }
+    } else if (action.type === 'MEMORIZE') {
+      // Logique pour mémoriser un artefact ou une étape
+      console.log("Mémoire Nexus mise à jour :", action.payload);
     }
   }, []);
 
@@ -151,6 +153,7 @@ const App: React.FC = () => {
               onNewMessage={(msg) => handleNewMessage(activeExpert.id, msg)} 
               onClearChat={() => setHistories(prev => ({ ...prev, [activeExpert.id]: [] }))} 
               onExpertChange={setActiveExpert}
+              onExecuteAction={handleAction}
               onClose={() => setIsExpertBranchActive(false)}
               isSovereignBranch={true}
             />
