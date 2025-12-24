@@ -1,6 +1,7 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { Expert, Message, AppAction, Artifact } from '../types';
 import { gemini, GeminiService } from '../services/geminiService';
+import { DocumentExporter } from '../services/documentExporter';
 import { EXPERTS } from '../constants';
 import { ExpertCard } from './ExpertCard';
 import { SupabaseService } from '../services/supabase';
@@ -103,8 +104,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         callbacks: {
           onopen: () => {
             setIsConnecting(false);
-            
-            // Audio Stream
             const source = inputCtx.createMediaStreamSource(stream);
             const scriptProcessor = inputCtx.createScriptProcessor(4096, 1, 1);
             scriptProcessor.onaudioprocess = (e) => {
@@ -117,7 +116,6 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             source.connect(scriptProcessor);
             scriptProcessor.connect(inputCtx.destination);
 
-            // Video Stream
             if (mode === 'video' && canvasRef.current && videoRef.current) {
               const canvas = canvasRef.current;
               const video = videoRef.current;
@@ -156,7 +154,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         config: {
           responseModalities: [Modality.AUDIO],
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: expert.voiceName } } },
-          systemInstruction: `Tu es ${expert.name} en liaison audio/vidéo directe. Réagis à la voix et à l'image.`
+          systemInstruction: `Tu es ${expert.name} en liaison audio/vidéo directe.`
         }
       });
       sessionRef.current = await sessionPromise;
@@ -178,15 +176,11 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             content: call.args.context,
             type: call.args.type as any,
           };
-          // On émet une notification/action vers le système global
           onExecuteAction?.({ type: 'MEMORIZE', payload: artifact });
-          return { status: 'success', artifact, message: `Artefact "${call.args.title}" généré et sauvegardé.` };
+          return { status: 'success', artifact, message: `Artefact "${call.args.title}" généré.` };
         case 'app_navigation':
           onExecuteAction?.({ type: 'NAVIGATE', target: call.args.target as any });
-          return { status: 'success', message: `Navigation vers ${call.args.target} effectuée.` };
-        case 'trigger_multimodal':
-          startLiveCall(call.args.mode as any);
-          return { status: 'success', message: `Appel ${call.args.mode} initialisé.` };
+          return { status: 'success', message: `Navigation effectuée.` };
         default:
           return { status: 'error', message: 'Outil non reconnu.' };
       }
@@ -204,25 +198,17 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
 
     try {
       await SupabaseService.saveChatMessage(expert.id, 'user', userMsg.content);
-      
-      // On active les outils pour l'Architecte
-      const response = await gemini.sendMessage(expert, userMsg.content, messages, { 
-        useThinking,
-        enableTools: true 
-      });
+      const response = await gemini.sendMessage(expert, userMsg.content, messages, { useThinking, enableTools: true });
 
       let finalContent = response.text;
       let artifacts: Artifact[] = [];
       let sources: any[] = response.sources;
 
-      // Gestion des appels d'outils (Function Calling)
       if (response.functionCalls && response.functionCalls.length > 0) {
         for (const call of response.functionCalls) {
           const toolResult = await executeTool(call);
           if (toolResult.artifact) artifacts.push(toolResult.artifact);
           if (toolResult.sources) sources = [...sources, ...toolResult.sources];
-          
-          // On peut renvoyer le résultat à Gemini pour une réponse plus riche
           const followUp = await gemini.sendMessage(expert, `Résultat de l'outil ${call.name}: ${JSON.stringify(toolResult)}`, messages, { useFastMode: true });
           finalContent += "\n\n" + followUp.text;
         }
@@ -234,7 +220,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
         content: finalContent, 
         timestamp: Date.now(), 
         sources: sources,
-        artifact: artifacts[0] // On lie le premier artefact généré au message
+        artifact: artifacts[0]
       };
 
       await SupabaseService.saveChatMessage(expert.id, 'model', modelMsg.content, modelMsg.sources);
@@ -263,6 +249,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
       )}
 
       <div className="flex-1 flex flex-col glass-panel rounded-[3.5rem] overflow-hidden relative border border-white/10 shadow-2xl">
+        {/* Chat Header ... */}
         <div className="px-10 py-6 border-b border-white/5 flex items-center justify-between bg-black/40 z-50">
           <div className="flex items-center gap-6">
             <img src={expert.avatar} alt="" className="w-14 h-14 rounded-2xl border border-white/10" />
@@ -272,54 +259,37 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             </div>
           </div>
           <div className="flex items-center gap-4">
-             <button 
-                onClick={() => startLiveCall('voice')} 
-                className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all ${callMode === 'voice' ? 'bg-blue-600 animate-pulse text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
-             >
-                <i className="fas fa-phone"></i>
-             </button>
-             <button 
-                onClick={() => startLiveCall('video')} 
-                className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all ${callMode === 'video' ? 'bg-emerald-600 animate-pulse text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}
-             >
-                <i className="fas fa-video"></i>
-             </button>
+             <button onClick={() => startLiveCall('voice')} className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all ${callMode === 'voice' ? 'bg-blue-600 animate-pulse text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}><i className="fas fa-phone"></i></button>
+             <button onClick={() => startLiveCall('video')} className={`w-12 h-12 rounded-xl border flex items-center justify-center transition-all ${callMode === 'video' ? 'bg-emerald-600 animate-pulse text-white' : 'bg-white/5 border-white/10 text-slate-400 hover:text-white'}`}><i className="fas fa-video"></i></button>
              {onClose && <button onClick={onClose} className="w-10 h-10 bg-white/5 border border-white/10 rounded-xl flex items-center justify-center hover:bg-red-600 transition-all text-slate-400 hover:text-white"><i className="fas fa-times"></i></button>}
           </div>
         </div>
 
         <div ref={scrollRef} className="flex-1 p-10 overflow-y-auto space-y-8 custom-scrollbar bg-black/10">
-          {callMode === 'video' && (
-            <div className="relative aspect-video bg-black/60 rounded-[3rem] border border-blue-500/30 overflow-hidden shadow-2xl mb-10">
-              <video ref={videoRef} autoPlay muted playsInline className="w-full h-full object-cover scale-x-[-1]" />
-              <div className="absolute top-6 left-6 flex items-center gap-3 bg-black/60 px-4 py-2 rounded-xl border border-white/10">
-                 <div className="w-2 h-2 rounded-full bg-emerald-500 animate-ping"></div>
-                 <span className="text-[8px] font-black uppercase text-emerald-400 tracking-widest">Liaison Multimodale Active</span>
-              </div>
-            </div>
-          )}
-
           {messages.map(m => (
             <div key={m.id} className={`flex flex-col ${m.role === 'user' ? 'items-end' : 'items-start'} animate-in slide-in-from-bottom-2`}>
               <div className={`max-w-[85%] p-8 rounded-[2.8rem] border ${m.role === 'user' ? 'bg-blue-600 border-blue-400 text-white' : 'bg-white/5 text-slate-100 border-white/10 shadow-xl'}`}>
                 <div className="whitespace-pre-wrap font-medium italic">"{m.content}"</div>
                 
-                {/* Artifact Preview inside chat */}
+                {/* Enhanced Artifact Card with Quick Export */}
                 {m.artifact && (
-                  <div className="mt-6 p-6 bg-black/40 rounded-3xl border border-white/10 space-y-4 hover:border-blue-500 transition-all cursor-pointer group/art" onClick={() => onExecuteAction?.({ type: 'NAVIGATE', target: 'strategy' })}>
+                  <div className="mt-6 p-6 bg-black/40 rounded-3xl border border-white/10 space-y-4 hover:border-blue-500 transition-all group/art">
                     <div className="flex justify-between items-center">
-                      <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">{m.artifact.type} • Généré</span>
-                      <i className="fas fa-file-export text-slate-600 group-hover/art:text-blue-500"></i>
+                      <span className="text-[10px] font-black uppercase text-blue-400 tracking-widest">{m.artifact.type} • Dossier Prêt</span>
+                      <div className="flex gap-2">
+                         <button onClick={() => DocumentExporter.export(m.artifact!, 'pdf')} className="w-8 h-8 bg-red-600/20 text-red-500 rounded-lg flex items-center justify-center hover:bg-red-600 hover:text-white transition-all" title="Exporter PDF"><i className="fas fa-file-pdf text-[10px]"></i></button>
+                         <button onClick={() => DocumentExporter.export(m.artifact!, 'docx')} className="w-8 h-8 bg-blue-600/20 text-blue-500 rounded-lg flex items-center justify-center hover:bg-blue-600 hover:text-white transition-all" title="Exporter Word"><i className="fas fa-file-word text-[10px]"></i></button>
+                      </div>
                     </div>
                     <h4 className="font-bold text-lg uppercase">{m.artifact.title}</h4>
-                    <p className="text-[11px] text-slate-500 line-clamp-2">Contenu archivé dans le strategic hub.</p>
+                    <button onClick={() => onExecuteAction?.({ type: 'NAVIGATE', target: 'strategy' })} className="text-[9px] font-black uppercase text-slate-600 hover:text-blue-400 tracking-widest transition-all">Consulter dans Strategic Hub</button>
                   </div>
                 )}
 
                 {/* Grounding Sources */}
                 {m.sources && m.sources.length > 0 && (
                   <div className="mt-6 pt-6 border-t border-white/5 space-y-3">
-                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Sources Nexus</span>
+                    <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Recherches Grounding</span>
                     <div className="flex flex-wrap gap-2">
                       {m.sources.map((s, i) => (
                         <a key={i} href={s.uri} target="_blank" className="px-3 py-1 bg-white/5 rounded-lg text-[9px] hover:text-blue-400 truncate max-w-[150px] border border-white/5">{s.title}</a>
@@ -330,34 +300,20 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
               </div>
             </div>
           ))}
-
-          {neuralStatus && (
-            <div className="flex items-center gap-4 text-blue-400 p-4 animate-pulse">
-               <div className="w-2 h-2 rounded-full bg-blue-500"></div>
-               <span className="text-[10px] font-black uppercase tracking-widest">{neuralStatus}</span>
-            </div>
-          )}
           {isTyping && <div className="flex justify-start"><div className="w-2 h-2 bg-blue-500 rounded-full animate-bounce"></div></div>}
         </div>
 
         <div className="p-10 bg-black/60 border-t border-white/5">
           <div className="max-w-5xl mx-auto flex gap-6">
-            <button 
-              onClick={() => startLiveCall('voice')}
-              className={`w-20 h-20 rounded-[2rem] flex items-center justify-center transition-all ${callMode !== 'text' ? 'bg-red-600' : 'bg-white/5 border border-white/10 text-slate-400'}`}
-            >
-              <i className={`fas ${callMode !== 'text' ? 'fa-phone-slash' : 'fa-microphone'} text-xl`}></i>
-            </button>
             <input 
               type="text" 
               value={input} 
               onChange={(e) => setInput(e.target.value)} 
               onKeyDown={(e) => e.key === 'Enter' && handleSend()} 
-              disabled={callMode !== 'text'}
-              placeholder={callMode !== 'text' ? "Liaison neuronale active..." : `Piloter votre projet avec ${expert.name}...`} 
-              className={`flex-1 bg-white/5 border border-white/10 rounded-[3rem] px-12 py-8 text-lg font-medium outline-none focus:border-blue-500 transition-all ${callMode !== 'text' ? 'opacity-30' : ''}`} 
+              placeholder={`Demander une recherche ou un rapport à l'Architecte...`} 
+              className={`flex-1 bg-white/5 border border-white/10 rounded-[3rem] px-12 py-8 text-lg font-medium outline-none focus:border-blue-500 transition-all`} 
             />
-            <button onClick={handleSend} disabled={!input.trim() || isTyping || callMode !== 'text'} className="bg-blue-600 w-20 h-20 rounded-[2rem] flex items-center justify-center shadow-xl active:scale-95 transition-all disabled:opacity-30">
+            <button onClick={handleSend} className="bg-blue-600 w-20 h-20 rounded-[2rem] flex items-center justify-center shadow-xl active:scale-95 transition-all">
               <i className={`fas ${isTyping ? 'fa-circle-notch fa-spin' : 'fa-paper-plane'} text-2xl`}></i>
             </button>
           </div>

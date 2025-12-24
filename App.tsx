@@ -1,6 +1,7 @@
+
 import React, { useState, useEffect, useCallback } from 'react';
 import { EXPERTS } from './constants';
-import { Expert, Message, ViewType, AppAction } from './types';
+import { Expert, Message, ViewType, AppAction, Artifact } from './types';
 import { DashboardComponent } from './components/DashboardComponent';
 import { MokNetwork } from './components/MokNetwork';
 import { LiveStudio } from './components/LiveStudio';
@@ -41,31 +42,31 @@ const App: React.FC = () => {
   const [activeExpert, setActiveExpert] = useState<Expert>(EXPERTS[0]);
   
   const [histories, setHistories] = useState<Record<string, Message[]>>({});
+  const [artifacts, setArtifacts] = useState<Artifact[]>([]);
   const [session, setSession] = useState<any>(null);
   const [pendingGoal, setPendingGoal] = useState<string | null>(null);
 
-  // Demande automatique du microphone au démarrage (Anticipation Multimodale)
   useEffect(() => {
     const requestMicAccess = async () => {
       try {
         await navigator.mediaDevices.getUserMedia({ audio: true });
-        console.log("Accès microphone accordé au démarrage.");
       } catch (err) {
-        console.warn("Accès microphone refusé ou bloqué au démarrage:", err);
+        console.warn("Accès microphone refusé:", err);
       }
     };
     requestMicAccess();
   }, []);
 
-  // Restauration de la mémoire souveraine au démarrage
   useEffect(() => {
     const initNexusMemory = async () => {
-      if (!supabase) return;
+      if (!supabase) {
+        setBooting(false);
+        return;
+      }
       
       const { data: { session } } = await supabase.auth.getSession();
       setSession(session);
 
-      // Charger l'historique pour chaque expert
       const loadedHistories: Record<string, Message[]> = {};
       for (const expert of EXPERTS) {
         const history = await SupabaseService.getChatHistory(expert.id);
@@ -96,8 +97,9 @@ const App: React.FC = () => {
         }
       }
     } else if (action.type === 'MEMORIZE') {
-      // Logique pour mémoriser un artefact ou une étape
-      console.log("Mémoire Nexus mise à jour :", action.payload);
+      if (action.payload?.content) {
+        setArtifacts(prev => [action.payload, ...prev]);
+      }
     }
   }, []);
 
@@ -128,10 +130,6 @@ const App: React.FC = () => {
         </div>
         <h1 className="mt-20 text-4xl font-black text-white tracking-[0.5em] uppercase animate-pulse text-center px-12 italic">NEXUS DIALLO</h1>
         <p className="mt-4 text-[10px] font-black text-blue-500 uppercase tracking-[0.5em]">Liaison à la Mémoire Souveraine...</p>
-        <div className="mt-8 flex items-center gap-2">
-           <div className="w-2 h-2 bg-emerald-500 rounded-full animate-ping"></div>
-           <span className="text-[8px] font-black text-slate-500 uppercase tracking-widest">Initialisation Multimodale...</span>
-        </div>
       </div>
     );
   }
@@ -210,7 +208,7 @@ const App: React.FC = () => {
           <div className="relative h-full z-10">
             {(() => {
               switch(view) {
-                case 'strategy': return <StrategicHub onNavigate={setView} onExecute={handleAction} externalGoal={pendingGoal} onGoalConsumed={() => setPendingGoal(null)} />;
+                case 'strategy': return <StrategicHub onNavigate={setView} onExecute={handleAction} externalGoal={pendingGoal} onGoalConsumed={() => setPendingGoal(null)} initialArtifacts={artifacts} />;
                 case 'lab': return <MediaLab />;
                 case 'genius': return <GeniusHub />;
                 case 'shop': return <ShopUniverse />;
@@ -222,7 +220,7 @@ const App: React.FC = () => {
                 case 'dashboard': return <DashboardComponent />;
                 case 'auth': return <SupabaseAuth />;
                 case 'mok': return <MokNetwork onClose={() => setView('dashboard')} />;
-                default: return <StrategicHub onNavigate={setView} onExecute={handleAction} externalGoal={pendingGoal} onGoalConsumed={() => setPendingGoal(null)} />;
+                default: return <DashboardComponent />;
               }
             })()}
           </div>

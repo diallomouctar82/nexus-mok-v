@@ -1,3 +1,4 @@
+
 import { GoogleGenAI, GenerateContentResponse, Type, Modality, FunctionDeclaration } from "@google/genai";
 import { Message, Expert, GroundingSource, ViewType, AppAction, StrategicPlan, QuizQuestion, SimulationScenario, Flashcard, Artifact, AcademyMission } from "../types";
 import { EXPERTS } from "../constants";
@@ -13,7 +14,21 @@ export class GeminiService {
     return new GoogleGenAI({ apiKey: process.env.API_KEY });
   }
 
-  // Outils disponibles pour l'Architecte dans le chat texte
+  private safeParseJson(text: string | undefined, fallback: any = {}) {
+    if (!text) return fallback;
+    try {
+      const cleanJson = text.replace(/```json/g, '').replace(/```/g, '').trim();
+      return JSON.parse(cleanJson);
+    } catch (e) {
+      console.warn("Échec du parsing JSON Gemini, tentative d'extraction brute...", e);
+      const match = text.match(/\{[\s\S]*\}/) || text.match(/\[[\s\S]*\]/);
+      if (match) {
+        try { return JSON.parse(match[0]); } catch { return fallback; }
+      }
+      return fallback;
+    }
+  }
+
   private getProjectTools(): FunctionDeclaration[] {
     return [
       {
@@ -33,7 +48,7 @@ export class GeminiService {
         parameters: {
           type: Type.OBJECT,
           properties: {
-            type: { type: Type.STRING, enum: ['email', 'report', 'plan', 'contract'], description: 'Type de document.' },
+            type: { type: Type.STRING, enum: ['email', 'report', 'plan', 'contract', 'analysis'], description: 'Type de document.' },
             title: { type: Type.STRING, description: 'Titre du document.' },
             context: { type: Type.STRING, description: 'Contenu détaillé ou contexte pour la rédaction.' }
           },
@@ -46,7 +61,7 @@ export class GeminiService {
         parameters: {
           type: Type.OBJECT,
           properties: {
-            target: { type: Type.STRING, description: 'La vue cible (ex: shop, strategy, mok, exchange).' }
+            target: { type: Type.STRING, description: 'La vue cible (ex: shop, strategy, mok, exchange, lab).' }
           },
           required: ['target']
         }
@@ -96,7 +111,7 @@ export class GeminiService {
     }
 
     const contents = [
-      ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
+      ...history.slice(-10).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
       { role: 'user', parts: [{ text: message }] }
     ];
 
@@ -119,12 +134,11 @@ export class GeminiService {
     };
   }
 
-  // Autres méthodes existantes conservées...
   async generateProjectArtifact(plan: StrategicPlan, type: string, context: string): Promise<Artifact> {
     const ai = this.getClient();
     const prompt = `Agis en tant que gestionnaire de projet expert. Basé sur le plan stratégique : "${plan.goal}" et le contexte actuel : "${context}".
     Génère un artefact de type "${type}" (ex: Email, Rapport, Liste de Bailleurs, Business Plan).
-    Réponds en JSON avec : title, content (Markdown), type.`;
+    Réponds EXCLUSIVEMENT en JSON avec : title, content (Markdown), type.`;
     
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
@@ -134,7 +148,7 @@ export class GeminiService {
         thinkingConfig: { thinkingBudget: 8192 }
       }
     });
-    const result = JSON.parse(response.text || "{}");
+    const result = this.safeParseJson(response.text, { title: "Nouveau Document", content: "...", type: "document" });
     return {
       id: Math.random().toString(36).substr(2, 9),
       expertId: 'maitre_diallo',
@@ -155,7 +169,7 @@ export class GeminiService {
     if (chunks) {
       sources = chunks.map((chunk: any) => (chunk.web ? { uri: chunk.web.uri, title: chunk.web.title } : null)).filter((s): s is GroundingSource => s !== null);
     }
-    return { text: response.text || "...", sources };
+    return { text: response.text || "Aucun résultat trouvé.", sources };
   }
 
   async analyzeMedia(prompt: string, media: { data: string, mimeType: string }): Promise<string> {
@@ -165,7 +179,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ inlineData: { data: media.data, mimeType: media.mimeType } }, { text: prompt }] }],
       config: { thinkingConfig: { thinkingBudget: 4096 } }
     });
-    return response.text || "";
+    return response.text || "Analyse impossible.";
   }
 
   async analyzeImage(data: string, mimeType: string, prompt: string): Promise<string> {
@@ -183,15 +197,19 @@ export class GeminiService {
 
   async generateSpeech(text: string, voiceName: string = 'Zephyr'): Promise<string | undefined> {
     const ai = this.getClient();
-    const response = await ai.models.generateContent({
-      model: "gemini-2.5-flash-preview-tts",
-      contents: [{ parts: [{ text }] }],
-      config: {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
-      },
-    });
-    return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    try {
+      const response = await ai.models.generateContent({
+        model: "gemini-2.5-flash-preview-tts",
+        contents: [{ parts: [{ text }] }],
+        config: {
+          responseModalities: [Modality.AUDIO],
+          speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName } } },
+        },
+      });
+      return response.candidates?.[0]?.content?.parts?.[0]?.inlineData?.data;
+    } catch {
+      return undefined;
+    }
   }
 
   async generateImage(prompt: string, config: { aspectRatio: string, imageSize: string }): Promise<string> {
@@ -200,7 +218,7 @@ export class GeminiService {
     const response = await ai.models.generateContent({
       model,
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
-      config: { imageConfig: { aspectRatio: config.aspectRatio, imageSize: config.imageSize } }
+      config: { imageConfig: { aspectRatio: config.aspectRatio as any, imageSize: config.imageSize as any } }
     });
     const candidate = response.candidates?.[0];
     if (candidate?.content?.parts) {
@@ -238,7 +256,7 @@ export class GeminiService {
         thinkingConfig: { thinkingBudget: 16384 }
       }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { goal, summary: "Plan en cours...", steps: [] });
   }
 
   async refineStrategicPlan(plan: StrategicPlan, request: string): Promise<StrategicPlan> {
@@ -253,7 +271,7 @@ export class GeminiService {
         thinkingConfig: { thinkingBudget: 8192 }
       }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, plan);
   }
 
   async predictNextAction(context: string): Promise<AppAction> {
@@ -263,7 +281,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Basé sur ce contexte : "${context}", quelle est la prochaine action Nexus ? Réponds en JSON (type, target, payload).` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { type: 'NOTIFY', payload: { message: "Action terminée." } });
   }
 
   async parseOmniCommand(input: string): Promise<any> {
@@ -273,17 +291,17 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Parse cette commande utilisateur en un objet de navigation (target: ViewType, params: object) : "${input}"` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { target: 'dashboard', params: {} });
   }
 
   async generateCourse(topic: string): Promise<any> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Crée un cursus de formation complet sur : "${topic}". Réflexion pédagogique.` }] }],
+      contents: [{ role: 'user', parts: [{ text: `Crée un cursus de formation complet sur : "${topic}". Réflexion pédagogique. Réponds en JSON.` }] }],
       config: { responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 16384 } }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { title: topic, modules: [] });
   }
 
   async getMarketIntelligence(query: string): Promise<{ text: string, sources: GroundingSource[] }> {
@@ -298,7 +316,7 @@ export class GeminiService {
     if (chunks) {
       sources = chunks.map((chunk: any) => (chunk.web ? { uri: chunk.web.uri, title: chunk.web.title } : null)).filter((s): s is GroundingSource => s !== null);
     }
-    return { text: response.text || "...", sources };
+    return { text: response.text || "Données indisponibles.", sources };
   }
 
   async analyzeTradeRisk(description: string): Promise<any> {
@@ -308,7 +326,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Analyse les risques pour : "${description}". JSON: {score, risks, advice}.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { score: 50, risks: [], advice: "Prudence recommandée." });
   }
 
   async appraiseAsset(description: string): Promise<any> {
@@ -318,7 +336,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Estime la valeur : "${description}". JSON: {suggestedPrice, reasoning, marketTrend}.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { suggestedPrice: "Prix inconnu", reasoning: "Analyse impossible.", marketTrend: "Stable" });
   }
 
   async negotiateTrade(history: Message[], userInput: string, tactic?: string): Promise<string> {
@@ -326,21 +344,21 @@ export class GeminiService {
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
       contents: [
-        ...history.map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
+        ...history.slice(-10).map(m => ({ role: m.role === 'user' ? 'user' : 'model', parts: [{ text: m.content }] })),
         { role: 'user', parts: [{ text: tactic ? `Tactic: ${tactic}. Input: ${userInput}` : userInput }] }
       ]
     });
-    return response.text || "";
+    return response.text || "Désolé, je n'ai pas pu formuler d'offre.";
   }
 
   async synthesizeExpert(prompt: string): Promise<Expert> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Synthétise un expert IA Diallo pour : "${prompt}". JSON complet.` }] }],
+      contents: [{ role: 'user', parts: [{ text: `Synthétise un expert IA Diallo pour : "${prompt}". JSON complet selon interface Expert.` }] }],
       config: { responseMimeType: "application/json", thinkingConfig: { thinkingBudget: 4096 } }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, EXPERTS[0]);
   }
 
   async generateDailyMissions(): Promise<AcademyMission[]> {
@@ -350,7 +368,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: "Génère 3 missions quotidiennes pour une académie de formation à la souveraineté. JSON: [{id, title, reward, difficulty, completed: false}]." }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async generateFlashcards(summary: string): Promise<Flashcard[]> {
@@ -360,7 +378,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Génère 5 flashcards à partir de ce texte : "${summary}". JSON: [{id, front, back, difficulty: 1}].` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async generateQuiz(title: string, content: string): Promise<QuizQuestion[]> {
@@ -370,7 +388,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Crée un quiz de 5 questions sur : "${title}". Contenu : "${content}". JSON: [{id, question, options, correctAnswer, explanation}]. Les options sont un tableau de 4 chaînes.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async generateSimulationScenario(courseTitle: string): Promise<SimulationScenario> {
@@ -380,7 +398,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Crée un scénario de simulation complexe pour le cours : "${courseTitle}". JSON: {id, title, context, goal, difficulty}.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { id: '1', title: 'Simulation', context: '...', goal: 'Gagner', difficulty: 'medium' });
   }
 
   async generateVocabList(lang: string, context: string): Promise<any[]> {
@@ -390,7 +408,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Génère une liste de 10 mots essentiels en ${lang} pour le contexte : "${context}". JSON: [{word, translation, example, tip}].` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async editImage(base64ImageData: string, mimeType: string, prompt: string): Promise<string> {
@@ -421,20 +439,20 @@ export class GeminiService {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Analyse cette conversation de groupe et donne un score de consensus global. Historique : ${JSON.stringify(history)}. JSON: {consensusScore: number (0-100)}.` }] }],
+      contents: [{ role: 'user', parts: [{ text: `Analyse cette conversation de groupe et donne un score de consensus global. Historique : ${JSON.stringify(history.slice(-10))}. JSON: {consensusScore: number (0-100)}.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || '{"consensusScore": 50}');
+    return this.safeParseJson(response.text, { consensusScore: 50 });
   }
 
   async getDetailedConsensus(history: Message[], selectedExperts: Expert[]): Promise<any[]> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-pro-preview',
-      contents: [{ role: 'user', parts: [{ text: `Pour chaque expert, évalue son score d'alignement sur la solution finale. Experts: ${JSON.stringify(selectedExperts.map(e => e.name))}. Historique : ${JSON.stringify(history)}. JSON: [{expertId, score, reasoning}].` }] }],
+      contents: [{ role: 'user', parts: [{ text: `Pour chaque expert, évalue son score d'alignement sur la solution finale. Experts: ${JSON.stringify(selectedExperts.map(e => e.name))}. Historique : ${JSON.stringify(history.slice(-10))}. JSON: [{expertId, score, reasoning}].` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async identifyBreakthroughs(history: Message[]): Promise<any[]> {
@@ -444,7 +462,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Identifie les moments clés de rupture ou d'innovation dans cette discussion. JSON: [{messageId, insight, impact}].` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async auditSynergyBias(history: Message[]): Promise<any> {
@@ -454,7 +472,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Analyse les biais cognitifs dominants dans cette discussion. JSON: {dominantBias, recommendation}.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { dominantBias: "Aucun détecté", recommendation: "Poursuivre." });
   }
 
   async extractStrategicAnchors(history: Message[]): Promise<any[]> {
@@ -464,16 +482,16 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Extrais les décisions stratégiques immuables (ancres) de cette session. JSON: [{id, title, description, impact: "high" | "medium"}].` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "[]");
+    return this.safeParseJson(response.text, []);
   }
 
   async generateSynergySummary(history: Message[]): Promise<string> {
     const ai = this.getClient();
     const response = await ai.models.generateContent({
       model: 'gemini-3-flash-preview',
-      contents: [{ role: 'user', parts: [{ text: "Résume synthétiquement les points d'accord majeurs de cette discussion." }, ...history.map(m => ({ text: m.content }))] }],
+      contents: [{ role: 'user', parts: [{ text: "Résume synthétiquement les points d'accord majeurs de cette discussion." }, ...history.slice(-5).map(m => ({ text: m.content }))] }],
     });
-    return response.text || "";
+    return response.text || "Résumé indisponible.";
   }
 
   async generateActionManifest(history: Message[]): Promise<any> {
@@ -483,7 +501,7 @@ export class GeminiService {
       contents: [{ role: 'user', parts: [{ text: `Génère un Manifeste d'Action Collective basé sur ces échanges. JSON: {title, vision, roadmap, criticalSuccessFactors}. roadmap et criticalSuccessFactors sont des tableaux de chaînes.` }] }],
       config: { responseMimeType: "application/json" }
     });
-    return JSON.parse(response.text || "{}");
+    return this.safeParseJson(response.text, { title: "Manifeste", vision: "...", roadmap: [], criticalSuccessFactors: [] });
   }
 
   static downsample(data: Float32Array, inputSR: number, outputSR: number): Float32Array {

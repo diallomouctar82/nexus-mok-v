@@ -23,11 +23,16 @@ export interface Expert {
 
 export interface Artifact {
   id: string;
-  type: 'plan' | 'document' | 'code' | 'analysis' | 'project' | 'certificate' | 'portfolio' | 'mission' | 'token' | 'strategy' | 'contract' | 'vision';
+  type: 'plan' | 'document' | 'code' | 'analysis' | 'project' | 'certificate' | 'portfolio' | 'mission' | 'token' | 'strategy' | 'contract' | 'vision' | 'presentation';
   title: string;
   content: string;
   expertId: string;
-  metadata?: any;
+  metadata?: {
+    sources?: GroundingSource[];
+    exportFormats?: ('pdf' | 'docx' | 'pptx')[];
+    layout?: 'report' | 'email' | 'slides' | 'legal';
+    [key: string]: any;
+  };
 }
 
 export interface SovereignSnapshot {
@@ -71,7 +76,7 @@ export type ViewType =
   | 'auth';
 
 export interface AppAction {
-  type: 'NAVIGATE' | 'GENERATE' | 'NOTIFY' | 'EXECUTE' | 'MEMORIZE' | 'SYNC' | 'EARN' | 'SIMULATE' | 'FORGE_CURSUS' | 'SUMMON' | 'ROLLBACK';
+  type: 'NAVIGATE' | 'GENERATE' | 'NOTIFY' | 'EXECUTE' | 'MEMORIZE' | 'SYNC' | 'EARN' | 'SIMULATE' | 'FORGE_CURSUS' | 'SUMMON' | 'ROLLBACK' | 'DOWNLOAD';
   target?: ViewType;
   payload?: any;
 }
@@ -128,7 +133,6 @@ export interface AcademyMission {
   completed: boolean;
 }
 
-// Fixed: Moved AIStudio interface to global scope to prevent subsequent property declaration conflicts on Window
 declare global {
   interface AIStudio {
     hasSelectedApiKey: () => Promise<boolean>;
@@ -136,10 +140,6 @@ declare global {
   }
 
   interface Window {
-    /**
-     * AI Studio environment bridge for API key management.
-     * Optional to avoid conflicts with environmental definitions.
-     */
     aistudio?: AIStudio;
   }
 }
