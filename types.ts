@@ -1,5 +1,4 @@
 
-
 export enum ExpertId {
   DIALLO = 'diallo',
   MAITRE_DIALLO = 'maitre_diallo',
@@ -130,22 +129,15 @@ export interface AcademyMission {
   completed: boolean;
 }
 
-// FIX: Define AIStudio interface to match environmental expectations and resolve property mismatch
-/**
- * Interface representing the AI Studio environment tools for API key management.
- */
-export interface AIStudio {
-  hasSelectedApiKey: () => Promise<boolean>;
-  openSelectKey: () => Promise<void>;
-}
-
-// Augmentation globale pour le build TypeScript
+// Global augmentation moved into declare global block to fix redeclaration conflict
 declare global {
+  interface AIStudio {
+    hasSelectedApiKey: () => Promise<boolean>;
+    openSelectKey: () => Promise<void>;
+  }
   interface Window {
-    // FIX: Use named interface AIStudio and optional modifier to match identical modifiers requirement
-    /**
-     * AI Studio global object for API key selection and management.
-     */
-    aistudio?: AIStudio;
+    // Making this non-optional and using the local interface definition
+    // ensures it merges correctly with the environment's global definition.
+    aistudio: AIStudio;
   }
 }

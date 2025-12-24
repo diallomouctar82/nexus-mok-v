@@ -121,8 +121,12 @@ export class GeminiService {
       config: { imageConfig: { aspectRatio: config.aspectRatio, imageSize: config.imageSize } }
     });
 
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+    // Added safety check for candidates and parts iteration to prevent runtime errors
+    const candidate = response.candidates?.[0];
+    if (candidate?.content?.parts) {
+      for (const part of candidate.content.parts) {
+        if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
     throw new Error("Échec de génération d'image.");
   }
@@ -133,8 +137,12 @@ export class GeminiService {
       model: 'gemini-2.5-flash-image',
       contents: [{ role: 'user', parts: [{ inlineData: { data, mimeType } }, { text: prompt }] }]
     });
-    for (const part of response.candidates[0].content.parts) {
-      if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+    // Added safety check for candidates and parts iteration to prevent runtime errors
+    const candidate = response.candidates?.[0];
+    if (candidate?.content?.parts) {
+      for (const part of candidate.content.parts) {
+        if (part.inlineData) return `data:image/png;base64,${part.inlineData.data}`;
+      }
     }
     throw new Error("Échec de l'édition d'image.");
   }
