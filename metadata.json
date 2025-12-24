@@ -1,0 +1,9 @@
+{
+  "name": "Nexus Diallo - Écosystème Souverain",
+  "description": "Plateforme d'intelligence artificielle multimodale par vision, voix et anticipation.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone",
+    "geolocation"
+  ]
+}
