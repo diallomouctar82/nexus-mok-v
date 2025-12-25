@@ -1,3 +1,4 @@
+
 export enum ExpertId {
   DIALLO = 'diallo',
   MAITRE_DIALLO = 'maitre_diallo',
@@ -21,6 +22,35 @@ export interface Expert {
   status?: 'idle' | 'thinking' | 'acting' | 'syncing' | 'summoned';
 }
 
+export interface ArchitectSkill {
+  id: string;
+  label: string;
+  description: string;
+  isActive: boolean;
+  instruction: string;
+}
+
+export interface ArchitectConfig {
+  name: string;
+  role: string;
+  dos: string[];
+  donts: string[];
+  generalInstruction: string;
+  searchEnabled: boolean;
+  thinkingBudget: number;
+  capabilities: ArchitectSkill[];
+  confidenceLevel: 'conservative' | 'balanced' | 'creative';
+  voiceSensitivity: number;
+}
+
+export interface AppSettings {
+  projectName: string;
+  tagline: string;
+  defaultCountry: string;
+  exchangeRate: number;
+  maintenanceMode: boolean;
+}
+
 export interface Artifact {
   id: string;
   type: 'plan' | 'document' | 'code' | 'analysis' | 'project' | 'certificate' | 'portfolio' | 'mission' | 'token' | 'strategy' | 'contract' | 'vision' | 'presentation';
@@ -31,16 +61,9 @@ export interface Artifact {
     sources?: GroundingSource[];
     exportFormats?: ('pdf' | 'docx' | 'pptx')[];
     layout?: 'report' | 'email' | 'slides' | 'legal';
+    skillUsed?: string;
     [key: string]: any;
   };
-}
-
-export interface SovereignSnapshot {
-  id: string;
-  timestamp: number;
-  label: string;
-  plan: StrategicPlan;
-  view: ViewType;
 }
 
 export interface GroundingSource {
@@ -57,6 +80,7 @@ export interface Message {
   expertId?: string;
   isSynergy?: boolean;
   artifact?: Artifact;
+  thought?: string; // Ajout pour le flux de pensée de l'Architecte
 }
 
 export type ViewType = 
@@ -73,40 +97,13 @@ export type ViewType =
   | 'dashboard' 
   | 'eye' 
   | 'lab'
+  | 'admin'
   | 'auth';
 
 export interface AppAction {
-  type: 'NAVIGATE' | 'GENERATE' | 'NOTIFY' | 'EXECUTE' | 'MEMORIZE' | 'SYNC' | 'EARN' | 'SIMULATE' | 'FORGE_CURSUS' | 'SUMMON' | 'ROLLBACK' | 'DOWNLOAD';
+  type: 'NAVIGATE' | 'GENERATE' | 'NOTIFY' | 'EXECUTE' | 'MEMORIZE' | 'SYNC' | 'EARN' | 'SIMULATE' | 'FORGE_CURSUS' | 'SUMMON' | 'ROLLBACK' | 'DOWNLOAD' | 'ORCHESTRATE';
   target?: ViewType;
   payload?: any;
-}
-
-export interface QuizQuestion {
-  id: string;
-  question: string;
-  options: string[];
-  correctAnswer: number;
-  explanation: string;
-}
-
-export interface SimulationScenario {
-  id: string;
-  title: string;
-  context: string;
-  goal: string;
-  difficulty: 'easy' | 'medium' | 'hard';
-}
-
-export interface Flashcard {
-  id: string;
-  front: string;
-  back: string;
-  difficulty: number;
-}
-
-export interface SkillMatrix {
-  label: string;
-  value: number; // 0-100
 }
 
 export interface StrategicStep {
@@ -125,12 +122,38 @@ export interface StrategicPlan {
   steps: StrategicStep[];
 }
 
+export interface QuizQuestion {
+  question: string;
+  options: string[];
+  correctAnswer: number;
+}
+
+export interface SimulationScenario {
+  id: string;
+  title: string;
+  context: string;
+  goal: string;
+  difficulty: 'easy' | 'medium' | 'hard';
+}
+
+export interface Flashcard {
+  id: string;
+  front: string;
+  back: string;
+  difficulty: number;
+}
+
 export interface AcademyMission {
   id: string;
   title: string;
-  reward: number;
-  difficulty: 'Easy' | 'Medium' | 'Hard';
-  completed: boolean;
+  description: string;
+  points: number;
+  status: 'pending' | 'completed';
+}
+
+export interface SkillMatrix {
+  label: string;
+  value: number;
 }
 
 declare global {
@@ -138,7 +161,6 @@ declare global {
     hasSelectedApiKey: () => Promise<boolean>;
     openSelectKey: () => Promise<void>;
   }
-
   interface Window {
     aistudio?: AIStudio;
   }

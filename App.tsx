@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useCallback } from 'react';
 import { EXPERTS } from './constants';
 import { Expert, Message, ViewType, AppAction, Artifact } from './types';
@@ -16,6 +15,7 @@ import { GeniusHub } from './components/GeniusHub';
 import { InfluencerStudio } from './components/InfluencerStudio';
 import { MediaLab } from './components/MediaLab';
 import { ChatInterface } from './components/ChatInterface';
+import { AdminDashboard } from './components/AdminDashboard';
 import { SupabaseAuth } from './components/SupabaseAuth';
 import { supabase, SupabaseService } from './services/supabase';
 
@@ -31,6 +31,7 @@ const ENTRY_POINTS = [
   { id: 'mok', label: 'ACADEMY', desc: 'Savoir Souverain', icon: 'fa-graduation-cap', color: 'text-purple-400' },
   { id: 'synergy', label: 'SYNERGIE', desc: 'Fusion Cognitive', icon: 'fa-users-rays', color: 'text-emerald-400' },
   { id: 'exchange', label: 'EXCHANGE', desc: 'Contrats Notariés', icon: 'fa-handshake', color: 'text-amber-400' },
+  { id: 'admin', label: 'ADMIN', desc: 'Contrôle Nexus', icon: 'fa-gears', color: 'text-red-500' },
 ];
 
 const App: React.FC = () => {
@@ -218,6 +219,7 @@ const App: React.FC = () => {
                 case 'synergy': return <NexusSynergy onAction={handleAction} />;
                 case 'exchange': return <QuantumExchange />;
                 case 'dashboard': return <DashboardComponent />;
+                case 'admin': return <AdminDashboard />;
                 case 'auth': return <SupabaseAuth />;
                 case 'mok': return <MokNetwork onClose={() => setView('dashboard')} />;
                 default: return <DashboardComponent />;
